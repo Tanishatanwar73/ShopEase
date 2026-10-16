@@ -1,104 +1,83 @@
-const API_URL = "http://localhost:5000/api";
 
-const DEMO_USERS_KEY = "shopEase_demo_users";
-const DEMO_PRODUCTS_KEY = "shopEase_demo_products";
-const DEMO_OTP_KEY = "shopEase_demo_otp";
-const DEMO_JWT_SECRET = "mysecretkey@@1234";
+const BACKEND_URL = (
+  import.meta.env.VITE_API_URL || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+const API_URL = `${BACKEND_URL}/api`;
+
 const PRODUCT_CACHE_KEY = "shopEase_products_cache";
 const PRODUCT_CACHE_TTL = 5 * 60 * 1000;
 
-const defaultProducts = [
-  {
-    _id: "64d8ef1b7c9a2b4d5e6f7a8b",
-    name: "Premium Wireless Earbuds",
-    description: "Noise-canceling earbuds with long battery life and crisp sound.",
-    price: 2499,
-    originalPrice: 3499,
-    category: "Electronics",
-    stock: 12,
-    rating: 4.8,
-    image: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=900&q=80",
-  },
-  {
-    _id: "7a1d3c5e9f2b4d6a8c0e1f3b",
-    name: "Urban Leather Backpack",
-    description: "Minimal style backpack designed for daily commuting and travel.",
-    price: 1799,
-    originalPrice: 2399,
-    category: "Accessories",
-    stock: 20,
-    rating: 4.7,
-    image: "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=900&q=80",
-  },
-  {
-    _id: "8c2f4a6d1e3b5d7f9a1c3e5b",
-    name: "Smart Fitness Watch",
-    description: "Track your activity, sleep and workouts in one sleek device.",
-    price: 3299,
-    originalPrice: 4299,
-    category: "Wearables",
-    stock: 9,
-    rating: 4.9,
-    image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=900&q=80",
-  },
-];
+// -------------------- COMMON HELPERS --------------------
 
-const ensureDemoData = () => {
-  if (typeof window === "undefined") return;
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(options.body instanceof FormData
+        ? {}
+        : options.body
+          ? { "Content-Type": "application/json" }
+          : {}),
+      ...(options.token
+        ? { Authorization: `Bearer ${options.token}` }
+        : {}),
+      ...options.headers,
+    },
+    body: options.body instanceof FormData
+      ? options.body
+      : options.body === undefined
+        ? undefined
+        : typeof options.body === "string"
+          ? options.body
+          : JSON.stringify(options.body),
+  });
 
-  const existingUsers = JSON.parse(localStorage.getItem(DEMO_USERS_KEY) || "[]");
-  if (!existingUsers.length) {
-    localStorage.setItem(
-      DEMO_USERS_KEY,
-      JSON.stringify([
-        {
-          _id: "67b6b9a74e1c2c0d9f6a1b23",
-          name: "Admin User",
-          email: "admin@shop.com",
-          password: "admin123",
-          phone: "9876543210",
-          role: "admin",
-          isVerified: true,
-        },
-      ])
-    );
-  }
+  const text = await response.text();
+  let result = {};
 
-  if (!localStorage.getItem(DEMO_PRODUCTS_KEY)) {
-    localStorage.setItem(DEMO_PRODUCTS_KEY, JSON.stringify(defaultProducts));
-  }
-};
-
-const getDemoUsers = () => {
-  ensureDemoData();
-  return JSON.parse(localStorage.getItem(DEMO_USERS_KEY) || "[]");
-};
-
-const getDemoProducts = () => {
-  ensureDemoData();
-  return JSON.parse(localStorage.getItem(DEMO_PRODUCTS_KEY) || "[]");
-};
-
-const saveDemoProducts = (products) => {
-  localStorage.setItem(DEMO_PRODUCTS_KEY, JSON.stringify(products));
-};
-
-const getCachedProducts = () => {
   try {
-    const cache = JSON.parse(localStorage.getItem(PRODUCT_CACHE_KEY) || "null");
-
-    if (!cache || !Array.isArray(cache.products)) return null;
-
-    const isFresh = Date.now() - (cache.timestamp || 0) < PRODUCT_CACHE_TTL;
-    if (!isFresh) return null;
-
-    return cache.products;
-  } catch (error) {
-    return null;
+    result = text ? JSON.parse(text) : {};
+  } catch {
+    result = { message: text || "Invalid server response" };
   }
-};
 
-const setCachedProducts = (products) => {
+  if (!response.ok) {
+    return {
+      success: false,
+      message: result.message || `Request failed (${response.status})`,
+      status: response.status,
+    };
+  }
+
+  return result;
+}
+
+function getToken(token) {
+  return token || localStorage.getItem("token");
+}
+
+function readProductCache() {
+  try {
+    const cached = JSON.parse(
+      localStorage.getItem(PRODUCT_CACHE_KEY) || "null"
+    );
+
+    if (
+      cached &&
+      Array.isArray(cached.products) &&
+      Date.now() - cached.timestamp < PRODUCT_CACHE_TTL
+    ) {
+      return cached.products;
+    }
+  } catch (error) {
+    console.warn("Unable to read product cache:", error);
+  }
+
+  return null;
+}
+
+function saveProductCache(products) {
   try {
     localStorage.setItem(
       PRODUCT_CACHE_KEY,
@@ -108,777 +87,459 @@ const setCachedProducts = (products) => {
       })
     );
   } catch (error) {
-    console.warn("Could not save product cache:", error);
+    console.warn("Unable to save product cache:", error);
   }
-};
+}
 
-const generateDemoOTP = () => String(Math.floor(100000 + Math.random() * 900000));
-
-const generateDemoObjectId = () =>
-  Array.from({ length: 24 }, () =>
-    Math.floor(Math.random() * 16)
-      .toString(16)
-  ).join("");
-
-const base64UrlEncode = (value) => {
-  const encoded = btoa(unescape(encodeURIComponent(value)));
-  return encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-};
-
-const createDemoToken = async (user) => {
-  const header = { alg: "HS256", typ: "JWT" };
-  const payload = { userId: user._id, role: user.role, email: user.email };
-
-  const encode = (value) => base64UrlEncode(JSON.stringify(value));
-  const signingInput = `${encode(header)}.${encode(payload)}`;
-
-  if (!window || !window.crypto || !window.crypto.subtle) {
-    return "demo-token";
-  }
-
-  const key = await window.crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(DEMO_JWT_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-
-  const signature = await window.crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(signingInput)
-  );
-
-  const signatureBase64 = base64UrlEncode(
-    String.fromCharCode(...new Uint8Array(signature))
-  );
-
-  return `${signingInput}.${signatureBase64}`;
-};
-
-const parseFormData = (formData) => {
-  if (formData instanceof FormData) {
-    return {
-      name: formData.get("name") || "",
-      description: formData.get("description") || "",
-      price: Number(formData.get("price") || 0),
-      category: formData.get("category") || "General",
-      stock: Number(formData.get("stock") || 0),
-      image: formData.get("image") || "",
-    };
-  }
-
-  return formData || {};
-};
-
-// ==================== AUTH ====================
+// -------------------- AUTHENTICATION --------------------
 
 export const registerUser = async (data) => {
   try {
-    const response = await fetch(`${API_URL}/auth/register`, {
+    return await apiRequest("/auth/register", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
+      body: data,
     });
-
-    return response.json();
   } catch (error) {
-    ensureDemoData();
-
-    const users = getDemoUsers();
-    const existingUser = users.find((user) => user.email === data.email);
-
-    if (existingUser && existingUser.isVerified) {
-      return {
-        success: false,
-        message: "User already exists. Please login.",
-      };
-    }
-
-    const otp = generateDemoOTP();
-    localStorage.setItem(DEMO_OTP_KEY, JSON.stringify({ email: data.email, otp }));
-
-    if (!existingUser) {
-      users.push({
-        _id: generateDemoObjectId(),
-        name: data.name,
-        email: data.email,
-        password: data.password,
-        phone: data.phone || "",
-        role: "user",
-        isVerified: false,
-      });
-      localStorage.setItem(DEMO_USERS_KEY, JSON.stringify(users));
-    }
-
+    console.error("Registration error:", error);
     return {
-      success: true,
-      message: "Registration successful. OTP sent to your email.",
-      demoOtp: otp,
+      success: false,
+      message: "Unable to connect to the server.",
     };
   }
 };
 
 export const verifyOTP = async (data) => {
   try {
-    const response = await fetch(`${API_URL}/auth/verify-otp`, {
+    return await apiRequest("/auth/verify-otp", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
+      body: data,
     });
-
-    return response.json();
   } catch (error) {
-    ensureDemoData();
-
-    const otpData = JSON.parse(localStorage.getItem(DEMO_OTP_KEY) || "null");
-    const users = getDemoUsers();
-    const user = users.find((item) => item.email === data.email);
-
-    if (!user) {
-      return { success: false, message: "User not found" };
-    }
-
-    if (!otpData || otpData.email !== data.email || otpData.otp !== String(data.otp)) {
-      return { success: false, message: "Invalid OTP" };
-    }
-
-    user.isVerified = true;
-    localStorage.setItem(DEMO_USERS_KEY, JSON.stringify(users));
-    localStorage.removeItem(DEMO_OTP_KEY);
-
+    console.error("OTP verification error:", error);
     return {
-      success: true,
-      message: "Email verified successfully",
+      success: false,
+      message: "Unable to verify OTP. Please try again.",
     };
   }
 };
 
 export const resendOTP = async (email) => {
   try {
-    const response = await fetch(`${API_URL}/auth/resend-otp`, {
+    return await apiRequest("/auth/resend-otp", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ email }),
+      body: { email },
     });
-
-    return response.json();
   } catch (error) {
-    ensureDemoData();
-    const otp = generateDemoOTP();
-    localStorage.setItem(DEMO_OTP_KEY, JSON.stringify({ email, otp }));
-
+    console.error("Resend OTP error:", error);
     return {
-      success: true,
-      message: "OTP sent again. Please verify your email.",
-      demoOtp: otp,
+      success: false,
+      message: "Unable to resend OTP.",
     };
   }
 };
 
 export const loginUser = async (data) => {
   try {
-    const response = await fetch(`${API_URL}/auth/login`, {
+    const result = await apiRequest("/auth/login", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
+      body: data,
     });
 
-    return response.json();
+    if (result.success && result.token) {
+      localStorage.setItem("token", result.token);
+
+      if (result.user) {
+        localStorage.setItem("user", JSON.stringify(result.user));
+      }
+    }
+
+    return result;
   } catch (error) {
-    ensureDemoData();
-
-    const users = getDemoUsers();
-    const user = users.find(
-      (item) => item.email === data.email && item.password === data.password
-    );
-
-    if (!user) {
-      return {
-        success: false,
-        message: "Invalid email or password",
-      };
-    }
-
-    if (!user.isVerified) {
-      return {
-        success: false,
-        message: "Please verify your email first",
-      };
-    }
-
-    const loggedInUser = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone || "",
-      role: user.role,
-    };
-
-    const demoToken = await createDemoToken(loggedInUser);
-
+    console.error("Login error:", error);
     return {
-      success: true,
-      message: "Login successful",
-      token: demoToken,
-      user: loggedInUser,
+      success: false,
+      message: "Unable to connect to the server.",
     };
   }
 };
 
 export const logoutUser = async (token) => {
   try {
-    const response = await fetch(`${API_URL}/auth/logout`, {
+    const result = await apiRequest("/auth/logout", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      token: getToken(token),
     });
 
-    return response.json();
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+
+    return result;
   } catch (error) {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+
+    console.error("Logout error:", error);
     return {
       success: true,
-      message: "Logged out successfully",
+      message: "Logged out locally.",
     };
   }
 };
 
-// ==================== PRODUCTS ====================
+// -------------------- PRODUCTS --------------------
 
 export const getProducts = async (forceRefresh = false) => {
   if (!forceRefresh) {
-    const cachedProducts = getCachedProducts();
-    if (cachedProducts) {
-      return { success: true, products: cachedProducts };
-    }
-  }
-
-  try {
-    const response = await fetch(`${API_URL}/products`);
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch products");
-    }
-
-    const result = await response.json();
-    const products = result?.products || [];
-
-    setCachedProducts(products);
-
-    return result;
-  } catch (error) {
-    console.error("Get products error:", error);
-
-    const cachedProducts = getCachedProducts();
+    const cachedProducts = readProductCache();
 
     if (cachedProducts) {
       return {
         success: true,
         products: cachedProducts,
-        message: "Loaded cached products",
       };
     }
+  }
+
+  try {
+    const result = await apiRequest("/products");
+
+    if (result.success !== false) {
+      const products = Array.isArray(result)
+        ? result
+        : result.products || [];
+
+      saveProductCache(products);
+
+      return Array.isArray(result)
+        ? { success: true, products: result }
+        : { ...result, products };
+    }
+
+    return {
+      ...result,
+      products: [],
+    };
+  } catch (error) {
+    console.error("Get products error:", error);
 
     return {
       success: false,
       products: [],
-      message: "Failed to fetch products from server",
+      message: "Unable to load products from the server.",
     };
   }
 };
-
 
 export const getProduct = async (id) => {
   try {
-    const response = await fetch(`${API_URL}/products/${id}`);
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch product");
-    }
-
-    return response.json();
+    return await apiRequest(
+      `/products/${encodeURIComponent(id)}`
+    );
   } catch (error) {
-    const product = getDemoProducts().find((item) => item._id === id);
+    console.error("Get product error:", error);
     return {
-      success: true,
-      product: product || null,
+      success: false,
+      product: null,
+      message: "Unable to load product.",
     };
   }
 };
-// ========================================
-// GET BEST SELLERS
-// ========================================
 
 export const getBestSellers = async () => {
   try {
-    const response = await fetch(
-      `${API_URL}/products/best-sellers`
-    );
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch best sellers");
-    }
-
-    return await response.json();
+    return await apiRequest("/products/best-sellers");
   } catch (error) {
     console.error("Get best sellers error:", error);
-
     return {
       success: false,
       products: [],
-      message: "Failed to fetch best sellers",
+      message: "Unable to load best sellers.",
     };
   }
 };
 
 export const createProduct = async (formData, token) => {
   try {
-    const response = await fetch(`${API_URL}/products`, {
+    return await apiRequest("/products", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      token: getToken(token),
       body: formData,
     });
-
-    return response.json();
   } catch (error) {
-    const products = getDemoProducts();
-    const payload = parseFormData(formData);
-
-    const newProduct = {
-      _id: generateDemoObjectId(),
-      name: payload.name || "New Demo Product",
-      description: payload.description || "Product added from demo mode.",
-      price: Number(payload.price || 0),
-      originalPrice: Number(payload.price || 0) + 500,
-      category: payload.category || "General",
-      stock: Number(payload.stock || 0),
-      rating: 4.6,
-      image:
-        payload.image && typeof payload.image === "string"
-          ? payload.image
-          : "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=900&q=80",
-    };
-
-    products.unshift(newProduct);
-    saveDemoProducts(products);
-
+    console.error("Create product error:", error);
     return {
-      success: true,
-      message: "Product added successfully",
-      product: newProduct,
+      success: false,
+      message: "Unable to create product.",
     };
   }
 };
 
 export const updateProduct = async (id, data, token) => {
   try {
-    const response = await fetch(`${API_URL}/products/${id}`, {
-      method: "PUT",
-
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-
-      body: JSON.stringify(data),
-    });
-
-    const result = await response.json();
-
-    return result;
+    return await apiRequest(
+      `/products/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
+        token: getToken(token),
+        body: data,
+      }
+    );
   } catch (error) {
     console.error("Update product error:", error);
-
     return {
       success: false,
-      message: "Failed to update product",
+      message: "Unable to update product.",
     };
   }
 };
 
 export const deleteProduct = async (id, token) => {
   try {
-    const response = await fetch(`${API_URL}/products/${id}`, {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const result = await apiRequest(
+      `/products/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        token: getToken(token),
+      }
+    );
 
-    return response.json();
+    if (result.success !== false) {
+      localStorage.removeItem(PRODUCT_CACHE_KEY);
+    }
+
+    return result;
   } catch (error) {
-    const products = getDemoProducts().filter((product) => product._id !== id);
-    saveDemoProducts(products);
-
+    console.error("Delete product error:", error);
     return {
-      success: true,
-      message: "Product deleted successfully",
+      success: false,
+      message: "Unable to delete product.",
     };
   }
 };
 
-// ==================== USER ====================
+// -------------------- USER PROFILE --------------------
 
 export const getProfile = async (token) => {
   try {
-    const response = await fetch(`${API_URL}/users/profile`, {
+    return await apiRequest("/users/profile", {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      token: getToken(token),
     });
-
-    return response.json();
   } catch (error) {
-    const users = getDemoUsers();
-    const user = users.find((item) => item.email === JSON.parse(localStorage.getItem("user") || "null")?.email);
-
+    console.error("Get profile error:", error);
     return {
-      success: true,
-      user: user || null,
+      success: false,
+      user: null,
+      message: "Unable to load profile.",
     };
   }
 };
 
 export const updateProfile = async (data, token) => {
   try {
-    const response = await fetch(`${API_URL}/users/profile`, {
+    return await apiRequest("/users/profile", {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(data),
+      token: getToken(token),
+      body: data,
     });
-
-    return response.json();
   } catch (error) {
-    const savedUser = JSON.parse(localStorage.getItem("user") || "null");
-    const users = getDemoUsers();
-    const existingUser = users.find((user) => user.email === savedUser?.email);
-
-    if (!existingUser) {
-      return { success: false, message: "User not found" };
-    }
-
-    Object.assign(existingUser, data, {
-      name: data.name || existingUser.name,
-      phone: data.phone || existingUser.phone,
-    });
-
-    localStorage.setItem(DEMO_USERS_KEY, JSON.stringify(users));
-    localStorage.setItem("user", JSON.stringify({ ...savedUser, ...existingUser }));
-
+    console.error("Update profile error:", error);
     return {
-      success: true,
-      message: "Profile updated successfully",
+      success: false,
+      message: "Unable to update profile.",
     };
   }
 };
 
 export const changePassword = async (data, token) => {
   try {
-    const response = await fetch(`${API_URL}/users/change-password`, {
+    return await apiRequest("/users/change-password", {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(data),
+      token: getToken(token),
+      body: data,
     });
-
-    return response.json();
   } catch (error) {
-    const savedUser = JSON.parse(localStorage.getItem("user") || "null");
-    const users = getDemoUsers();
-    const existingUser = users.find((user) => user.email === savedUser?.email);
-
-    if (!existingUser) {
-      return { success: false, message: "User not found" };
-    }
-
-    if (existingUser.password !== data.currentPassword) {
-      return { success: false, message: "Current password is incorrect" };
-    }
-
-    existingUser.password = data.newPassword;
-    localStorage.setItem(DEMO_USERS_KEY, JSON.stringify(users));
-
+    console.error("Change password error:", error);
     return {
-      success: true,
-      message: "Password updated successfully",
+      success: false,
+      message: "Unable to change password.",
     };
   }
 };
 
-
-// ========================================
-// GET WISHLIST
-// ========================================
+// -------------------- WISHLIST --------------------
 
 export const getWishlist = async (token) => {
   try {
-    const response = await fetch(
-      `${API_URL}/wishlist`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-
-    const result = await response.json();
-
-    return result;
+    return await apiRequest("/wishlist", {
+      method: "GET",
+      token: getToken(token),
+    });
   } catch (error) {
     console.error("Get wishlist error:", error);
-
     return {
       success: false,
       products: [],
-      message: "Failed to fetch wishlist",
+      message: "Unable to load wishlist.",
     };
   }
 };
 
-// ========================================
-// ADD TO WISHLIST
-// ========================================
-
-export const addToWishlist = async (
-  productId,
-  token
-) => {
+export const addToWishlist = async (productId, token) => {
   try {
-    const response = await fetch(
-      `${API_URL}/wishlist`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          productId,
-        }),
-      }
-    );
-
-    const result = await response.json();
-
-    return result;
+    return await apiRequest("/wishlist", {
+      method: "POST",
+      token: getToken(token),
+      body: { productId },
+    });
   } catch (error) {
-    console.error("Add wishlist error:", error);
-
+    console.error("Add to wishlist error:", error);
     return {
       success: false,
-      message: "Failed to add product to wishlist",
+      message: "Unable to add product to wishlist.",
     };
   }
 };
 
-// ========================================
-// REMOVE FROM WISHLIST
-// ========================================
-
-export const removeFromWishlist = async (
-  productId,
-  token
-) => {
+export const removeFromWishlist = async (productId, token) => {
   try {
-    const response = await fetch(
-      `${API_URL}/wishlist/${productId}`,
+    return await apiRequest(
+      `/wishlist/${encodeURIComponent(productId)}`,
       {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        token: getToken(token),
       }
     );
-
-    const result = await response.json();
-
-    return result;
   } catch (error) {
-    console.error("Remove wishlist error:", error);
-
+    console.error("Remove from wishlist error:", error);
     return {
       success: false,
-      message: "Failed to remove product",
+      message: "Unable to remove product from wishlist.",
     };
   }
 };
 
+// -------------------- AI ASSISTANT --------------------
 
 export const askAI = async (prompt) => {
   try {
-    const response = await fetch(`${API_URL}/ai/ask`, {
+    return await apiRequest("/ai/ask", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ prompt }),
+      body: { prompt },
     });
-
-    const data = await response.json();
-
-    return data;
   } catch (error) {
     console.error("AI request error:", error);
-
     return {
       success: false,
-      message: "Failed to connect to AI",
+      message: "Unable to connect to the AI service.",
     };
   }
 };
 
+// -------------------- SHOPPING CART --------------------
 
-/* ==================== CART ==================== */
-
-// GET CART
 export const getCart = async () => {
+  const token = getToken();
+
+  if (!token) {
+    return {
+      success: false,
+      items: [],
+      message: "Please log in first.",
+    };
+  }
+
   try {
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      return { success: false, items: [], message: "Please log in first." };
-    }
-
-    const response = await fetch(`${API_URL}/cart`, {
-      headers: { Authorization: `Bearer ${token}` },
+    return await apiRequest("/cart", {
+      method: "GET",
+      token,
     });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        items: [],
-        message: result.message || "Failed to fetch cart.",
-      };
-    }
-
-    return result;
   } catch (error) {
     console.error("Get cart error:", error);
-    return { success: false, items: [], message: "Could not connect to server." };
+    return {
+      success: false,
+      items: [],
+      message: "Unable to load cart.",
+    };
   }
 };
 
-// ADD PRODUCT TO CART
 export const addToCart = async (productId, quantity = 1) => {
+  const token = getToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: "Please log in to add products to your cart.",
+    };
+  }
+
   try {
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      return { success: false, message: "Please log in to add products to cart." };
-    }
-
-    const response = await fetch(`${API_URL}/cart`, {
+    return await apiRequest("/cart", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ productId, quantity }),
+      token,
+      body: { productId, quantity },
     });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: result.message || "Failed to add product to cart.",
-      };
-    }
-
-    return result;
   } catch (error) {
     console.error("Add to cart error:", error);
-    return { success: false, message: "Could not connect to server." };
+    return {
+      success: false,
+      message: "Unable to add product to cart.",
+    };
   }
 };
 
-// UPDATE CART QUANTITY
 export const updateCartQuantity = async (productId, quantity) => {
+  const token = getToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: "Please log in first.",
+    };
+  }
+
   try {
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      return { success: false, message: "Please log in first." };
-    }
-
-    const response = await fetch(
-      `${API_URL}/cart/${productId}`,
+    return await apiRequest(
+      `/cart/${encodeURIComponent(productId)}`,
       {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ quantity }),
+        token,
+        body: { quantity },
       }
     );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: result.message || "Failed to update quantity.",
-      };
-    }
-
-    return result;
   } catch (error) {
     console.error("Update cart error:", error);
-    return { success: false, message: "Could not connect to server." };
+    return {
+      success: false,
+      message: "Unable to update cart quantity.",
+    };
   }
 };
 
-// REMOVE PRODUCT FROM CART
 export const removeFromCart = async (productId) => {
+  const token = getToken();
+
+  if (!token) {
+    return {
+      success: false,
+      message: "Please log in first.",
+    };
+  }
+
   try {
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      return { success: false, message: "Please log in first." };
-    }
-
-    const response = await fetch(
-      `${API_URL}/cart/${productId}`,
+    return await apiRequest(
+      `/cart/${encodeURIComponent(productId)}`,
       {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        token,
       }
     );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: result.message || "Failed to remove product.",
-      };
-    }
-
-    return result;
   } catch (error) {
-    console.error("Remove cart error:", error);
-    return { success: false, message: "Could not connect to server." };
+    console.error("Remove from cart error:", error);
+    return {
+      success: false,
+      message: "Unable to remove product from cart.",
+    };
   }
 };
